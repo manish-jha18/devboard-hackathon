@@ -35,6 +35,14 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v7
 
+      # Required by the provenance/sbom options below. A runner's default
+      # builder uses the `docker` driver, which cannot emit attestations —
+      # BuildKit needs the `docker-container` driver, and this action is what
+      # creates one. Without it the build step fails outright rather than
+      # quietly skipping the attestations.
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Docker Setup [Login]
         uses: docker/login-action@v4
         with:
