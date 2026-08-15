@@ -451,13 +451,25 @@ kubectl -n devboard-helm get gateway devboard-gateway   # new ELB hostname
 kubectl argo rollouts get rollout devboard-frontend -n devboard-helm --watch
 ```
 
-> **Image coordinates:** `helm/devboard/values.yaml` now points at
-> `manishjha18/devboard-*` at tag `sha-4945e5b` — a tag that was built from the
-> upstream repo and **does not exist under `manishjha18`**. Deploying before the
-> pipeline has published its own will `ImagePullBackOff`. Either run the
-> pipeline first (it bumps these in the same commit), or, if you intend to keep
-> running the upstream images, set the three `repository:` values back to
-> `trainwithshubham/devboard-*`.
+> **Image coordinates:** `helm/devboard/values.yaml` points at
+> `trainwithshubham/devboard-*` at `sha-4945e5b` — the upstream images the
+> cluster serves today. That tag exists under that account, so the chart
+> deploys as-is with no `ImagePullBackOff`.
+>
+> `gitops-bump` will rewrite both the repository and the tag on the first green
+> pipeline run, moving them to `vars.DOCKERHUB_USERNAME`. That is the intended
+> end state. To stay on upstream images permanently, drop the `.repository =`
+> assignments from the yq expressions in
+> [`.github/workflows/gitops-bump.yml`](.github/workflows/gitops-bump.yml) and
+> keep the `.tag =` ones.
+
+> **Consequence for signature verification:** the `verify-image-signatures`
+> policy matches `manishjha18/devboard-*`. While the cluster runs upstream
+> images, that policy matches nothing and is effectively inert — it is not
+> failing, it simply has no subject. It starts applying once CI publishes under
+> your own account. Widen `imageReferences` in
+> [`gitops/kyverno/policies/verify-image-signatures.yaml`](gitops/kyverno/policies/verify-image-signatures.yaml)
+> if you want unsigned upstream images flagged in the meantime.
 
 ---
 

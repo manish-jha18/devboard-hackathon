@@ -24,18 +24,25 @@ postgres:
       memory: 256Mi
 
 # ---------------------------------------------------------------------------
-# Image coordinates below are CI-MANAGED. .github/workflows/gitops-bump.yml
-# rewrites repository and tag on every successful pipeline run, so treat what
-# is committed here as a starting point, not a decision.
+# Image coordinates below are CI-MANAGED, with one deliberate exception.
 #
-# The tags currently pinned were built from the UPSTREAM repository and do not
-# exist under manishjha18. Deploying this chart before the pipeline has run
-# once will therefore ImagePullBackOff. Run the pipeline first; it publishes
-# sha-<short> for all three services and bumps these lines in the same commit.
+# These point at trainwithshubham/* — the UPSTREAM images — on purpose. They
+# are what the running cluster serves today, and sha-4945e5b exists under that
+# account, so the chart deploys as-is. Pointing them at manishjha18/* would
+# ImagePullBackOff, because the pipeline has not published its own images yet
+# (docker-push is blocked behind the Trivy CRITICAL gate).
+#
+# HOWEVER: .github/workflows/gitops-bump.yml rewrites BOTH repository and tag
+# on every successful pipeline run, using vars.DOCKERHUB_USERNAME as the owner.
+# So the first green pipeline will move these to that account and this comment
+# will be stale. That is the intended end state — CI owning its own artifacts —
+# not a bug. If you want to stay on upstream images permanently, remove the
+# `.repository =` assignments from that workflow's yq expressions; leaving the
+# `.tag =` ones alone keeps deployments tracking CI.
 # ---------------------------------------------------------------------------
 backend:
   image:
-    repository: manishjha18/devboard-backend
+    repository: trainwithshubham/devboard-backend
     tag: sha-4945e5b
     pullPolicy: IfNotPresent
   replicas: 1
@@ -50,7 +57,7 @@ backend:
       memory: 128Mi
 frontend:
   image:
-    repository: manishjha18/devboard-frontend
+    repository: trainwithshubham/devboard-frontend
     tag: sha-4945e5b
     pullPolicy: IfNotPresent
   replicas: 1
@@ -126,7 +133,7 @@ frontend:
 ai:
   enabled: true
   image:
-    repository: manishjha18/devboard-ai-service
+    repository: trainwithshubham/devboard-ai-service
     tag: sha-4945e5b
     pullPolicy: IfNotPresent
   replicas: 1
