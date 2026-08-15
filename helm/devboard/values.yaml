@@ -22,7 +22,6 @@ postgres:
     limits:
       cpu: 500m
       memory: 256Mi
-
 # ---------------------------------------------------------------------------
 # Image coordinates below are CI-MANAGED, with one deliberate exception.
 #
@@ -42,8 +41,8 @@ postgres:
 # ---------------------------------------------------------------------------
 backend:
   image:
-    repository: trainwithshubham/devboard-backend
-    tag: sha-4945e5b
+    repository: manishjha18/devboard-backend
+    tag: sha-5e73620
     pullPolicy: IfNotPresent
   replicas: 1
   serviceName: backend
@@ -57,8 +56,8 @@ backend:
       memory: 128Mi
 frontend:
   image:
-    repository: trainwithshubham/devboard-frontend
-    tag: sha-4945e5b
+    repository: manishjha18/devboard-frontend
+    tag: sha-5e73620
     pullPolicy: IfNotPresent
   replicas: 1
   containerPort: 4173
@@ -75,7 +74,6 @@ frontend:
     minReplicas: 1
     maxReplicas: 5
     targetCPUUtilizationPercentage: 60
-
   # Left empty on purpose. The Kyverno restricted-security-context policy will
   # flag this in Audit mode, which is the correct outcome: the finding is real.
   # Filling these in without first confirming the image runs as non-root turns
@@ -86,22 +84,18 @@ frontend:
   #   securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: false}
   podSecurityContext: {}
   securityContext: {}
-
   # ---- progressive delivery -------------------------------------------
   rollout:
     # Replaces the frontend Deployment with an Argo Rollout. Requires the
     # argo-rollouts platform app (gitops/argocd/platform/argo-rollouts.yaml).
     enabled: true
-
     # How many old ReplicaSets to keep. This is the rollback depth: Argo
     # Rollouts can undo to any revision still in history, so 5 means the last
     # five deploys are recoverable in seconds.
     revisionHistoryLimit: 5
-
     # Keep the previous ReplicaSet warm for 30s after an abort so rollback is
     # instant rather than a cold start.
     abortScaleDownDelaySeconds: 30
-
     # 20% -> watch -> 50% -> watch -> 100%. Each pause is a window for the
     # AnalysisRun to fail the rollout before it widens.
     steps:
@@ -112,7 +106,6 @@ frontend:
       - pause:
           duration: 2m
       - setWeight: 100
-
     analysis:
       prometheusAddress: http://prometheus-operated.observability.svc.cluster.local:9090
       # The Envoy Gateway's span-metrics identity. Confirmed present in
@@ -129,12 +122,11 @@ frontend:
       # attribution.
       minSuccessRate: "0.95"
       maxLatencyP95Ms: 1500
-
 ai:
   enabled: true
   image:
-    repository: trainwithshubham/devboard-ai-service
-    tag: sha-4945e5b
+    repository: manishjha18/devboard-ai-service
+    tag: sha-5e73620
     pullPolicy: IfNotPresent
   replicas: 1
   serviceName: ai-service
