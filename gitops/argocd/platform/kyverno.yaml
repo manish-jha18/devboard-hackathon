@@ -73,6 +73,20 @@ spec:
     server: https://kubernetes.default.svc
     namespace: kyverno
 
+  ignoreDifferences:
+    # The chart ships these CRDs with no spec.conversion. The API server
+    # defaults one in ({strategy: None}) the moment they are created, so
+    # ArgoCD compares a manifest without the field to a live object with it
+    # and reports every policies.kyverno.io CRD permanently OutOfSync.
+    #
+    # Nothing is actually wrong — the app stays Healthy and the policies load
+    # — but a component parked OutOfSync forever trains everyone to ignore the
+    # ArgoCD UI, which is where they are supposed to notice real drift.
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jsonPointers:
+        - /spec/conversion
+
   syncPolicy:
     automated:
       prune: true
