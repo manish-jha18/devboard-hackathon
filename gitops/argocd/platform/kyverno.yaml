@@ -73,19 +73,30 @@ spec:
     server: https://kubernetes.default.svc
     namespace: kyverno
 
-  ignoreDifferences:
-    # The chart ships these CRDs with no spec.conversion. The API server
-    # defaults one in ({strategy: None}) the moment they are created, so
-    # ArgoCD compares a manifest without the field to a live object with it
-    # and reports every policies.kyverno.io CRD permanently OutOfSync.
-    #
-    # Nothing is actually wrong — the app stays Healthy and the policies load
-    # — but a component parked OutOfSync forever trains everyone to ignore the
-    # ArgoCD UI, which is where they are supposed to notice real drift.
-    - group: apiextensions.k8s.io
-      kind: CustomResourceDefinition
-      jsonPointers:
-        - /spec/conversion
+  # KNOWN COSMETIC DRIFT — this app sits permanently OutOfSync / Healthy.
+  #
+  # The 11 policies.kyverno.io CRDs report OutOfSync. Kyverno itself is fine:
+  # all four ClusterPolicies load with Succeeded and PolicyReports generate
+  # normally. What was ruled out, so nobody repeats it:
+  #
+  #   - deep-diffed the chart-rendered CRD against the live object: the only
+  #     field difference is /spec/conversion, which the API server defaults in
+  #   - ignoreDifferences on /spec/conversion: no effect on sync status
+  #   - RespectIgnoreDifferences=true alongside it: no effect either
+  #   - the live CRDs carry NO labels at all, including ArgoCD's
+  #     app.kubernetes.io/instance tracking label
+  #   - an explicit sync operation returns "Succeeded — no more tasks" and the
+  #     CRDs still gain no label
+  #
+  # So ArgoCD is including these CRDs in its DIFF but excluding them from its
+  # SYNC task list. That points at the chart's CRD delivery (they appear to be
+  # materialised outside ArgoCD's apply, which is why they are untracked)
+  # rather than at anything configurable here. Deliberately left alone: adding
+  # ignoreDifferences that does not change the outcome is worse than an
+  # honest OutOfSync, because it looks like the problem was handled.
+  #
+  # Do NOT "fix" this with Replace=true — that recreates the CRDs and takes
+  # every ClusterPolicy with them.
 
   syncPolicy:
     automated:
