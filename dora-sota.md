@@ -1,12 +1,33 @@
 # DORA + SOTA — what was built, what it checks, how to reach it
 
-Operational reference for the DORA and progressive-delivery layer added to
-DevBoard. For *why* each piece is shaped the way it is — the trade-offs, the
-canary's blind spots, the things that were ruled out — see
-[`gitops/16-dora-sota.md`](gitops/16-dora-sota.md). This file is the practical
-one: what exists, what each thing actually checks, and how to open it.
+Single reference for the DORA and progressive-delivery layer added to DevBoard:
+what exists, what each piece actually checks, how to reach it, and where the
+honest limits are.
 
 Application: <http://a1e028058687441b2bbb7d22ccc5cfb7-1032811035.us-west-2.elb.amazonaws.com/>
+
+---
+
+## Three things that were broken first
+
+None of the four DORA numbers can mean anything until these are true. All three
+are fixed; they are recorded here because they explain why the metrics read the
+way they do.
+
+**The pipeline had never run.** `devsecops.yml` triggered on
+`branches: [mega-project]` — a branch that does not exist in this fork. Every
+gate, build and image push was dormant. Retargeted to `feat/full`, along with
+`terraform-ci.yml`.
+
+**Nothing consumed the pipeline's output.** `gitops-bump` writes the new image
+tag into `helm/devboard/values.yaml` and `k8s/`, expecting ArgoCD to notice. But
+the running stack was applied by hand with `kubectl apply -f k8s/` — no
+`argocd.argoproj.io/instance` label, no Application watching it. CI could have
+pushed images forever without deploying one.
+
+**Every gate was advisory.** Trivy, Checkov and the IaC scan all ran with
+`continue-on-error: true`, so a CRITICAL CVE produced a green tick. Scanning
+without gating is a dashboard, not a control.
 
 ---
 
