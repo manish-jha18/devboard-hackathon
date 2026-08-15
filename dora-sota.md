@@ -153,8 +153,18 @@ with no fix, and a gate everyone learns to bypass protects nothing.
 expiry date, so the suppression gets revisited instead of inherited:
 
 ```
-CVE-2024-24790  # esbuild devDependency, not reachable at runtime. expires 2026-11-01
+CVE-2024-00000  # not reachable: we never invoke the affected codec. expires 2026-12-01
 ```
+
+The file is currently empty, which is the goal.
+
+**How the frontend passes it.** `frontend/Dockerfile` builds with Node and then
+serves the output from `dhi.io/nginx:1` — only `dist/` and an nginx config reach
+the runtime image. Serving with `vite preview` instead would require the whole
+`node_modules` tree at runtime, which drags esbuild's Go binary into production
+along with CVEs from a Go toolchain nothing there ever executes. `nginx.conf`
+reproduces the two things vite preview did: SPA fallback, and `/api/*` proxied
+to `backend:8080` with the prefix stripped. Side effect: 557MB → 50MB.
 
 ---
 
@@ -421,28 +431,53 @@ kubectl -n dora rollout restart deploy/dora-exporter
 
 | Component | Status |
 |---|---|
-| Kyverno + 4 policies | running · 13 PolicyReports · 36 pass / 39 fail |
-| Trivy gate | running · currently blocking on two frontend CVEs |
-| Argo Rollouts controller | running · no Rollout object yet |
-| DORA exporter | running · scraped · all four keys read 0 / no-data |
+| CI pipeline | **all 15 jobs green** end to end |
+| Trivy gate | passing · 0 CRITICAL on all three images |
+| Secret scanning | passing |
+| Kyverno + 4 policies | running · PolicyReports generating |
+| Supply chain | images signed, SBOMs attested to the registry |
+| DORA exporter | running · scraped · **reporting real data** |
 | Grafana dashboard | loaded |
+| Argo Rollouts controller | running · no Rollout object yet |
 | Alertmanager | disabled |
 
-The DORA numbers read zero because no deployment has been recorded yet, and
-there is no Rollout object because the Helm stack has not been applied. Both
-follow from the same two steps below.
+The pipeline has completed a full cycle: gates → build → sign → SBOM →
+gitops-bump → deployment record. `helm/devboard/values.yaml` now carries
+`manishjha18/devboard-*` at a tag CI built, published and signed.
 
-### Getting the loop running
+First recorded deployment:
 
-**Step 1 — let the pipeline finish.** `docker-push`, `gitops-bump` and
-`deployment-record` are skipped while the Trivy gate fails, so nothing is signed
-and nothing is counted. Either add the blocking CVEs to `.trivyignore` with an
-expiry, or stop copying `node_modules` into the runtime stage of
-`frontend/Dockerfile` (that also removes roughly 500MB from the image).
+```
+dora_deployments_total             1
+dora_deployment_frequency_per_day  0.033
+dora_lead_time_seconds             204      commit -> deployed, 3m24s
+dora_change_failure_rate           0.0
+dora_mttr_seconds                  NaN      no failures yet
+```
 
-**Step 2 — deploy the Helm stack.** `gitops/argocd/devboard-helm.yaml` targets
-namespace `devboard-helm`, so it stands up a **parallel** stack with its own
-Gateway and load balancer. The stack running in `devboard` is untouched.
+### Verify the supply chain yourself
+
+```bash
+TAG=$(grep -m1 'tag:' helm/devboard/values.yaml | awk '{print $2}')
+
+cosign verify \
+  --certificate-identity-regexp '^https://github.com/manish-jha18/devboard-hackathon/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  manishjha18/devboard-frontend:$TAG
+
+cosign download attestation manishjha18/devboard-frontend:$TAG \
+  | jq -r .payload | base64 -d | jq '.predicate.packages | length'
+```
+
+The signing identity resolves to
+`.../.github/workflows/docker-push.yml@refs/heads/feat/full`, recorded in Rekor.
+
+### What is left
+
+**Deploy the Helm stack.** This is the only remaining step, and it is what
+gives Argo Rollouts a Rollout to manage. `gitops/argocd/devboard-helm.yaml`
+targets namespace `devboard-helm`, so it stands up a **parallel** stack with its
+own Gateway and load balancer — the stack running in `devboard` is untouched.
 
 ```bash
 kubectl apply -f gitops/argocd/devboard-helm.yaml
@@ -450,22 +485,11 @@ kubectl -n devboard-helm get gateway devboard-gateway     # its new ELB hostname
 kubectl argo rollouts get rollout devboard-frontend -n devboard-helm --watch
 ```
 
-Once both are done: pushes deploy through the canary, deployments are recorded,
-and the dashboard fills in.
+After that, every push to `feat/full` deploys through the canary, and a failed
+canary aborts itself.
 
-### Two things to know about image ownership
-
-`helm/devboard/values.yaml` points at `trainwithshubham/devboard-*` at
-`sha-4945e5b` — the images the cluster serves today, so the chart deploys as-is.
-
-`gitops-bump` rewrites both the repository and the tag on the first successful
-pipeline run, moving them to `vars.DOCKERHUB_USERNAME`. To stay on upstream
-images permanently, drop the `.repository =` assignments from the yq expressions
-in `.github/workflows/gitops-bump.yml` and keep the `.tag =` ones.
-
-While upstream images are deployed, `verify-image-signatures` matches nothing —
-its `imageReferences` is `manishjha18/devboard-*`. It is not failing; it has no
-subject. Widen that field if you want unsigned upstream images flagged too.
+**Optionally, enable Alertmanager** so `DeployedRevisionFailing` can trigger
+rollback without a human — see [section 6](#6--rollback-and-alerts).
 
 ---
 
