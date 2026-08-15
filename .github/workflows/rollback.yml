@@ -108,7 +108,7 @@ jobs:
       #   - the rollback deployment    -> MTTR stop-clock
       # The exporter reads both from the Deployments API.
       - name: Record the rollback
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           REVERTED: ${{ needs.revert.outputs.reverted_sha }}
           RESTORED_TAG: ${{ needs.revert.outputs.restored_tag }}
