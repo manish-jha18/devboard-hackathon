@@ -17,7 +17,7 @@ spec:
         valueFiles:
           - $values/gitops/observability/tempo-values.yaml
 
-    - repoURL: https://github.com/LondheShubham153/devboard.git
+    - repoURL: https://github.com/manish-jha18/devboard-hackathon.git
       targetRevision: mega-project
       ref: values
 

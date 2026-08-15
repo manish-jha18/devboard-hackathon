@@ -9,7 +9,7 @@ spec:
   project: default
 
   source:
-    repoURL: https://github.com/LondheShubham153/devboard.git
+    repoURL: https://github.com/manish-jha18/devboard-hackathon.git
     targetRevision: mega-project
     path: gitops/observability/manifests
 
