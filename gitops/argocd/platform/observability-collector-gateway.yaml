@@ -18,7 +18,7 @@ spec:
           - $values/gitops/observability/collector-gateway-values.yaml
 
     - repoURL: https://github.com/manish-jha18/devboard-hackathon.git
-      targetRevision: mega-project
+      targetRevision: feat/full
       ref: values
 
   destination:
