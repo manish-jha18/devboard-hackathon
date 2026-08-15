@@ -72,11 +72,20 @@ spec:
             runbook: "kubectl argo rollouts undo devboard-frontend -n devboard-helm — or run the Rollback workflow to revert the gitops commit"
 
         - alert: RolloutAborted
-          # Argo Rollouts marks a Rollout Degraded when an AnalysisRun fails
-          # and the canary is aborted. This alert is the notification half of
-          # automated rollback: the abort already happened, a human just needs
-          # to know a change was rejected.
-          expr: rollout_info{phase="Degraded"} == 1
+          # rollout_phase, not rollout_info. Both carry a phase label, but
+          # rollout_phase emits an explicit 0/1 series for EVERY phase, so
+          # "== 1" is unambiguous. rollout_info emits a single series whose
+          # phase label is whatever the rollout is doing right now.
+          #
+          # The phase values the controller actually emits are:
+          #   Abort, Completed, Error, Paused, Progressing, Timeout
+          # There is no "Degraded" phase — that is ArgoCD's health status for
+          # the Application, a different thing entirely. An alert written
+          # against phase="Degraded" matches nothing and never fires.
+          #
+          # This is the notification half of automated rollback: the abort has
+          # already happened, a human just needs to know a change was rejected.
+          expr: rollout_phase{phase="Abort"} == 1
           for: 2m
           labels:
             severity: warning
@@ -94,7 +103,7 @@ spec:
           # Inconclusive — usually a Prometheus query returning no data. Left
           # alone this looks like a successful deploy that simply never
           # finishes, and it silently stops all delivery.
-          expr: rollout_info{phase="Paused"} == 1
+          expr: rollout_phase{phase="Paused"} == 1
           for: 30m
           labels:
             severity: warning
@@ -105,6 +114,24 @@ spec:
               AnalysisRun is Inconclusive because its Prometheus query returns
               no data. Check the AnalysisRun before promoting blindly.
             runbook: "kubectl argo rollouts get rollout {{ $labels.name }} -n {{ $labels.namespace }}"
+
+        - alert: RolloutError
+          # The Error phase means the controller could not progress the
+          # rollout at all — bad image reference, missing AnalysisTemplate,
+          # unschedulable pods. Distinct from Abort, which means analysis ran
+          # and rejected the change.
+          expr: rollout_phase{phase="Error"} == 1
+          for: 5m
+          labels:
+            severity: critical
+            dora_incident: "true"
+          annotations:
+            summary: "Rollout {{ $labels.name }} is in Error — the controller cannot progress it"
+            description: >-
+              Usually an unpullable image, a missing AnalysisTemplate, or pods
+              that cannot be scheduled. Unlike an abort, nothing rolled back on
+              its own; the rollout is simply stuck.
+            runbook: "kubectl argo rollouts get rollout {{ $labels.name }} -n {{ $labels.namespace }} && kubectl -n {{ $labels.namespace }} describe rollout {{ $labels.name }}"
 
     # ---- the metrics pipeline itself -------------------------------------
     - name: dora-pipeline-health
