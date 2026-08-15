@@ -19,7 +19,7 @@ variable "kubernetes_version" {
 variable "node_instance_type" {
   description = "Worker node instance type. t3.large (2 vCPU / 8 GiB) is the floor once Ollama and the observability stack are running; t3.medium cannot fit them."
   type        = string
-  default     = "t3.large"
+  default     = "m7i-flex.large"
 }
 
 variable "node_desired_size" {
