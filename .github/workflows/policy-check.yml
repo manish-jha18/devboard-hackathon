@@ -87,18 +87,11 @@ jobs:
           path: kyverno-report.txt
           retention-days: 5
 
-  policy-lint:
-    name: Policy manifests are valid
-    runs-on: ubuntu-latest
-    steps:
-      - name: Code Checkout
-        uses: actions/checkout@v7
-
-      - name: Install Kyverno CLI
-        uses: kyverno/action-install-cli@v0.2.0
-
-      # Catches a malformed policy at PR time. Without this, a typo in a
-      # ClusterPolicy only shows up as an ArgoCD app stuck Degraded, which is a
-      # much worse place to discover it.
-      - name: Validate policy syntax
-        run: kyverno validate gitops/kyverno/policies/ --detailed-results
+# There is deliberately no separate "validate policy syntax" job.
+#
+# The Kyverno CLI dropped the `validate` subcommand — v1.18.2 offers only
+# apply / create / docs / jp / json / migrate / test. The `kyverno apply` step
+# above already parses every policy into the same Go types the controller
+# uses, so a malformed policy fails there with the parse error attached. A
+# second job calling a command that no longer exists just fails every run for
+# a reason unrelated to the change being reviewed.
