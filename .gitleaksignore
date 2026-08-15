@@ -1,0 +1,29 @@
+# GitLeaks finding suppressions, by fingerprint.
+#
+# Each line is commit:path:rule:line. Only add one with a written reason.
+#
+# ---------------------------------------------------------------------------
+# k8s/secrets.yml on the `main` branch — a Kubernetes Secret holding
+# POSTGRES_PASSWORD and POSTGRES_DB, committed in the repository's very first
+# commit before External Secrets was introduced.
+#
+# Why this is suppressed rather than treated as an incident:
+#
+#   - It is NOT the credential the cluster uses. devboard-secrets is now
+#     produced by an ExternalSecret from AWS Secrets Manager
+#     (gitops/external-secrets/), and the committed value differs from the live
+#     one — confirmed by comparing SHA-256 digests, not by reading either.
+#   - The file no longer exists on `feat/full`; it has been deleted from `main`
+#     too. This entry exists solely because gitleaks scans git HISTORY, and the
+#     blob is still reachable from that first commit.
+#
+# Why the history was not rewritten: `main` is the published default branch of
+# a public repository. Rewriting it invalidates every existing clone and fork
+# to erase a credential that was never live. If that trade ever becomes worth
+# making, `git filter-repo --path k8s/secrets.yml --invert-paths` on `main`
+# followed by a force-push removes the blob, and this line can be deleted.
+#
+# Reviewed: 2026-08-15. Revisit if the repo is ever made the basis of a real
+# deployment, or if the value is found to match a live credential.
+# ---------------------------------------------------------------------------
+0ab372f98a55d3c3dafc20cd5da574c64c95449e:k8s/secrets.yml:kubernetes-secret-yaml:2

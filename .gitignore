@@ -42,3 +42,10 @@ terraform/backend.hcl
 #   .terraform.lock.hcl   provider checksums. Committing it is the whole point;
 #                         it is Terraform's package-lock.json.
 #   terraform.tfvars      teaching defaults with no secrets in them.
+
+# --- Kubernetes Secret manifests ---------------------------------------------
+# Rendered Secret manifests do not belong in git. The cluster's devboard-secrets
+# is produced by an ExternalSecret from AWS Secrets Manager
+# (gitops/external-secrets/), so anything matching these is a local artefact.
+k8s/secrets.yml
+k8s/secrets.yaml
