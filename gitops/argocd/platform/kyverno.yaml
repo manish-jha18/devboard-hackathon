@@ -1,0 +1,84 @@
+# Kyverno — the admission controller that enforces gitops/kyverno/policies.
+#
+# Wave 0, alongside cert-manager and External Secrets: it owns CRDs that the
+# policies in wave 2 are instances of. Install them in the same wave and ArgoCD
+# races itself — the ClusterPolicy manifests get applied before the CRD that
+# defines them exists, and the app parks in a permanent Degraded state.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kyverno
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+
+  source:
+    repoURL: https://kyverno.github.io/kyverno
+    chart: kyverno
+    targetRevision: "3.8.2"
+    helm:
+      valuesObject:
+        # Three replicas is the chart default and assumes three nodes for the
+        # admission webhook's own availability. This cluster has exactly three
+        # nodes and a lot else on them; one replica of each controller is the
+        # honest trade for a demo cluster. Raise this before you rely on
+        # Enforce mode in anger.
+        admissionController:
+          replicas: 1
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          # Reports drive the policy dashboard. Without them Kyverno enforces
+          # silently and Audit mode tells you nothing.
+          serviceMonitor:
+            enabled: true
+
+        backgroundController:
+          replicas: 1
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          serviceMonitor:
+            enabled: true
+
+        reportsController:
+          replicas: 1
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          serviceMonitor:
+            enabled: true
+
+        cleanupController:
+          replicas: 1
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kyverno
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # Kyverno's CRDs are large enough to blow the 262144-byte
+      # last-applied-configuration annotation, same as cert-manager.
+      - ServerSideApply=true

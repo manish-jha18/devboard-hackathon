@@ -1,0 +1,22 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: dora-exporter
+  # Lives in observability alongside the other ServiceMonitors, matching the
+  # convention in gitops/observability/manifests/servicemonitors.yaml.
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: devboard
+spec:
+  namespaceSelector:
+    matchNames:
+      - dora
+  selector:
+    matchLabels:
+      app: dora-exporter
+  endpoints:
+    - port: metrics
+      path: /metrics
+      # The exporter only refreshes from GitHub every 5 minutes, so scraping
+      # faster than that just resamples the same numbers.
+      interval: 60s

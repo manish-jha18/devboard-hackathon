@@ -1,0 +1,39 @@
+# The DORA metrics exporter. Wave 1: it needs the Prometheus Operator's
+# ServiceMonitor CRD (wave 1) to exist, and there is no point scraping it
+# before Prometheus itself is up.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dora-exporter
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/manish-jha18/devboard-hackathon.git
+    targetRevision: feat/full
+    path: gitops/dora
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dora
+
+  ignoreDifferences:
+    # The optional dora-github secret is created out of band with kubectl and
+    # deliberately not in Git — a GitHub PAT does not belong in a public repo.
+    # Without this, ArgoCD would report the app OutOfSync forever because a
+    # resource exists in the cluster that Git does not describe.
+    - group: ""
+      kind: Secret
+      name: dora-github
+      jsonPointers:
+        - /data
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

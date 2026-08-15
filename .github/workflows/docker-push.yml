@@ -1,5 +1,15 @@
 name: Docker Push
 
+# Builds, pushes, signs and attests every service image.
+#
+# Supply chain chain-of-custody, in order:
+#   1. build-push-action publishes the image and returns an immutable DIGEST
+#   2. cosign signs THAT DIGEST keylessly, using the workflow's OIDC identity
+#   3. syft produces an SPDX SBOM, which cosign attaches as a signed attestation
+#
+# Everything after step 1 addresses the digest, never the tag. Tags are mutable;
+# signing a tag signs whatever happens to be there when someone verifies it.
+
 on:
   workflow_call:
     inputs:
@@ -7,6 +17,12 @@ on:
         description: Immutable tag to push (e.g. sha-abc1234)
         required: true
         type: string
+
+permissions:
+  contents: read
+  # Keyless signing exchanges this OIDC token for a short-lived Fulcio
+  # certificate. Without it cosign falls back to asking for a key and hangs.
+  id-token: write
 
 jobs:
   build-push:
@@ -33,10 +49,70 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Docker Build and Push
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: ./${{ matrix.folders }}
           push: true
+          # SLSA provenance recorded by BuildKit itself. Separate from the
+          # cosign attestation below: this one describes HOW the image was
+          # built, the SBOM describes WHAT is inside it.
+          provenance: mode=max
+          sbom: true
           tags: |
             ${{ vars.DOCKERHUB_USERNAME }}/devboard-${{ matrix.folders }}:${{ inputs.image_tag }}
             ${{ vars.DOCKERHUB_USERNAME }}/devboard-${{ matrix.folders }}:latest
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.7.0
+
+      - name: Sign image (keyless)
+        env:
+          IMAGE: ${{ vars.DOCKERHUB_USERNAME }}/devboard-${{ matrix.folders }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -eu
+          # --yes skips the "this will be public in the transparency log" prompt.
+          # The signature lands in Rekor, so verification needs no key material.
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+
+      - name: Generate SBOM (SPDX JSON)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ vars.DOCKERHUB_USERNAME }}/devboard-${{ matrix.folders }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.folders }}.spdx.json
+          upload-artifact: false
+
+      - name: Attest SBOM to the registry
+        env:
+          IMAGE: ${{ vars.DOCKERHUB_USERNAME }}/devboard-${{ matrix.folders }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -eu
+          cosign attest --yes \
+            --predicate "sbom-${{ matrix.folders }}.spdx.json" \
+            --type spdxjson \
+            "${IMAGE}@${DIGEST}"
+
+      - name: Verify our own signature
+        env:
+          IMAGE: ${{ vars.DOCKERHUB_USERNAME }}/devboard-${{ matrix.folders }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -eu
+          # Fails the build if what we just published cannot be verified with
+          # the same constraints Kyverno uses in-cluster. Catching an identity
+          # mismatch here is far cheaper than catching it at admission time.
+          cosign verify \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPOSITORY}/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "${IMAGE}@${DIGEST}"
+
+      - name: Upload SBOM artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.folders }}
+          path: sbom-${{ matrix.folders }}.spdx.json
+          retention-days: 30

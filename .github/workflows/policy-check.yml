@@ -1,0 +1,104 @@
+name: Policy as Code
+
+# Runs the same Kyverno policies the cluster enforces, against the manifests
+# this commit would deploy — before they reach the cluster.
+#
+# The point is shift-left: Kyverno in-cluster tells you a Pod was rejected
+# after someone merged and ArgoCD synced. Kyverno here tells the author, on
+# their PR, with the offending line in the diff. Same rules, both places,
+# loaded from the same directory so they cannot drift.
+
+on:
+    workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  kyverno:
+    name: Kyverno policy check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Code Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Kyverno CLI
+        uses: kyverno/action-install-cli@v0.2.0
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Render the Helm chart
+        run: |
+          set -eu
+          mkdir -p rendered
+          # Render with the rollout ON, because that is what actually deploys.
+          # Rendering only the default path would leave the Rollout's pod
+          # template — the thing a canary admits — completely unchecked.
+          helm template devboard helm/devboard \
+            --namespace devboard-helm \
+            --set frontend.rollout.enabled=true \
+            > rendered/helm-rollout.yaml
+          helm template devboard helm/devboard \
+            --namespace devboard-helm \
+            --set frontend.rollout.enabled=false \
+            > rendered/helm-deployment.yaml
+
+      - name: Collect raw manifests
+        run: |
+          set -eu
+          cp k8s/*.yml rendered/ 2>/dev/null || true
+          ls -la rendered/
+
+      # verify-image-signatures is deliberately NOT in this list: it reaches
+      # out to the registry and Rekor, so it cannot be evaluated offline and
+      # would fail here for reasons that have nothing to do with the change.
+      # It is enforced at admission only.
+      - name: Apply policies
+        run: |
+          set -eu
+          kyverno apply \
+            gitops/kyverno/policies/disallow-latest-tag.yaml \
+            gitops/kyverno/policies/require-probes-and-resources.yaml \
+            gitops/kyverno/policies/require-nonroot.yaml \
+            --resource rendered/ \
+            --policy-report \
+            --detailed-results \
+            | tee kyverno-report.txt
+
+      - name: Fail on policy violations
+        run: |
+          set -eu
+          # `kyverno apply` exits 0 for Audit-mode policies. That is right for
+          # the cluster (Audit must not block a running workload) but wrong for
+          # CI, where the whole point is to catch it before it merges. So we
+          # read the report ourselves.
+          if grep -qE '^\s*fail:\s*[1-9]' kyverno-report.txt; then
+            echo "::error::Kyverno policy violations found — see the report above."
+            exit 1
+          fi
+          echo "No policy violations."
+
+      - name: Upload policy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kyverno-policy-report
+          path: kyverno-report.txt
+          retention-days: 5
+
+  policy-lint:
+    name: Policy manifests are valid
+    runs-on: ubuntu-latest
+    steps:
+      - name: Code Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Kyverno CLI
+        uses: kyverno/action-install-cli@v0.2.0
+
+      # Catches a malformed policy at PR time. Without this, a typo in a
+      # ClusterPolicy only shows up as an ArgoCD app stuck Degraded, which is a
+      # much worse place to discover it.
+      - name: Validate policy syntax
+        run: kyverno validate gitops/kyverno/policies/ --detailed-results

@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dora-exporter
+  namespace: dora
+  labels:
+    app: dora-exporter
+    app.kubernetes.io/part-of: devboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dora-exporter
+  template:
+    metadata:
+      labels:
+        app: dora-exporter
+        app.kubernetes.io/part-of: devboard
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: dora-exporter
+          image: manishjha18/devboard-dora-exporter:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: metrics
+              containerPort: 9101
+          env:
+            - name: GITHUB_REPOSITORY
+              value: manish-jha18/devboard-hackathon
+            - name: DORA_ENVIRONMENT
+              value: production
+            - name: DORA_WINDOW_DAYS
+              value: "30"
+            - name: DORA_REFRESH_SECONDS
+              value: "300"
+            # Optional on purpose. Unauthenticated works against a public repo
+            # at 60 req/hour; with a token it is 5000. Create the secret with:
+            #   kubectl -n dora create secret generic dora-github \
+            #     --from-literal=token=ghp_xxx
+            # optional: true means the pod still starts without it rather than
+            # sitting in CreateContainerConfigError.
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: dora-github
+                  key: token
+                  optional: true
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

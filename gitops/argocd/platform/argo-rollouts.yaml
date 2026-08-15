@@ -1,0 +1,62 @@
+# Argo Rollouts — the controller behind canary delivery and automated rollback.
+#
+# Wave 0 with the other CRD owners: helm/devboard ships a Rollout resource, and
+# a Rollout manifest applied before its CRD exists is just an unrecognised kind.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argo-rollouts
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+
+  source:
+    repoURL: https://argoproj.github.io/argo-helm
+    chart: argo-rollouts
+    targetRevision: "2.41.1"
+    helm:
+      valuesObject:
+        installCRDs: true
+
+        controller:
+          replicas: 1
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          metrics:
+            enabled: true
+            # No additionalLabels needed: prometheus-values.yaml sets
+            # serviceMonitorSelectorNilUsesHelmValues: false, so the operator
+            # adopts every ServiceMonitor in the cluster regardless of labels.
+            serviceMonitor:
+              enabled: true
+
+        # The Rollouts dashboard. Worth having: "visible deploy history" in the
+        # DORA sense means someone can see which revision is live, which is
+        # canarying, and what the last five looked like — without kubectl.
+        # ClusterIP only; reach it with kubectl port-forward.
+        dashboard:
+          enabled: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argo-rollouts
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

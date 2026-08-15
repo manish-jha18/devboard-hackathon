@@ -1,0 +1,173 @@
+name: Rollback
+
+# Automated rollback, and the other half of the MTTR number.
+#
+# Two entry points, on purpose:
+#
+#   workflow_dispatch     — a human decides. Reason is required, because a
+#                           rollback with no recorded reason is a change
+#                           failure that never gets counted.
+#   repository_dispatch   — Alertmanager decides. The DeployedRevisionFailing
+#                           alert in gitops/observability/manifests/prometheusrule-dora.yaml
+#                           posts here, so a bad deploy reverts without waiting
+#                           for someone to read a notification.
+#
+# The mechanism is git, not kubectl. Reverting the gitops-bump commit puts the
+# previous image tag back in the manifests; ArgoCD's auto-sync notices within
+# ~3 minutes and rolls the cluster back to it. Doing it with kubectl instead
+# would leave Git claiming the broken revision is live, and ArgoCD's selfHeal
+# would then dutifully re-deploy the failure.
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: Why are we rolling back? (recorded against the DORA change-failure count)
+        required: true
+        type: string
+      environment:
+        description: Environment being rolled back
+        required: false
+        default: production
+        type: string
+  repository_dispatch:
+    types: [rollback]
+
+permissions:
+  contents: write
+  deployments: write
+
+concurrency:
+  # Never let two rollbacks race; the second would revert the first.
+  group: rollback-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  revert:
+    runs-on: ubuntu-latest
+    outputs:
+      reverted_sha: ${{ steps.revert.outputs.reverted_sha }}
+      restored_tag: ${{ steps.revert.outputs.restored_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: feat/full
+
+      - name: Identify the deploy commit to revert
+        id: find
+        run: |
+          set -eu
+          # The gitops-bump job is the only thing that writes "ci: deploy".
+          # Anything else touching these paths was a human, and reverting a
+          # human's commit unannounced is not this workflow's job.
+          SHA="$(git log -n 1 --format=%H --grep='^ci: deploy' -- k8s helm/devboard/values.yaml || true)"
+          if [ -z "$SHA" ]; then
+            echo "::error::No 'ci: deploy' commit found — nothing to roll back."
+            exit 1
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Reverting: $(git log -n 1 --oneline "$SHA")"
+
+      - name: Revert it
+        id: revert
+        env:
+          SHA: ${{ steps.find.outputs.sha }}
+          REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'automated rollback triggered by Alertmanager' }}
+        run: |
+          set -eu
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git revert --no-commit "$SHA"
+          git commit -m "revert: roll back ${SHA:0:7} [skip ci]" -m "Reason: ${REASON}"
+
+          # Report what we landed on, so the deployment record below names a
+          # real artifact rather than "the previous one".
+          TAG="$(grep -oP '(?<=tag: ).*' helm/devboard/values.yaml | head -1 || echo unknown)"
+          echo "reverted_sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "restored_tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+          for i in 1 2 3; do
+            git pull --rebase origin feat/full && git push origin HEAD:feat/full && exit 0
+            echo "Push rejected (attempt ${i}); retrying..."
+            sleep $((i * 5))
+          done
+          exit 1
+
+  record:
+    needs: revert
+    runs-on: ubuntu-latest
+    permissions:
+      deployments: write
+      contents: read
+    steps:
+      # Two records, because they answer different DORA questions:
+      #   - the failed deployment      -> change failure rate numerator
+      #   - the rollback deployment    -> MTTR stop-clock
+      # The exporter reads both from the Deployments API.
+      - name: Record the rollback
+        uses: actions/github-script@v7
+        env:
+          REVERTED: ${{ needs.revert.outputs.reverted_sha }}
+          RESTORED_TAG: ${{ needs.revert.outputs.restored_tag }}
+          REASON: ${{ github.event.inputs.reason || github.event.client_payload.reason || 'automated rollback triggered by Alertmanager' }}
+        with:
+          script: |
+            const env = context.payload.inputs?.environment || 'production';
+
+            // Mark the deployment that broke as failed.
+            const deployments = await github.rest.repos.listDeployments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              environment: env,
+              per_page: 10,
+            });
+            if (deployments.data.length > 0) {
+              await github.rest.repos.createDeploymentStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                deployment_id: deployments.data[0].id,
+                state: 'failure',
+                description: `rolled back: ${process.env.REASON}`.slice(0, 140),
+              });
+            }
+
+            // And record the rollback itself as its own deployment.
+            const rollback = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'feat/full',
+              environment: env,
+              auto_merge: false,
+              required_contexts: [],
+              description: `rollback of ${process.env.REVERTED?.slice(0,7)} -> ${process.env.RESTORED_TAG}`,
+              payload: {
+                rollback: true,
+                reverted_sha: process.env.REVERTED,
+                restored_tag: process.env.RESTORED_TAG,
+                reason: process.env.REASON,
+              },
+            });
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: rollback.data.id,
+              state: 'success',
+              description: 'rollback pushed; ArgoCD will sync within ~3 minutes',
+            });
+
+      - name: Summary
+        run: |
+          {
+            echo "### Rollback complete"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Reverted commit | \`${{ needs.revert.outputs.reverted_sha }}\` |"
+            echo "| Restored tag | \`${{ needs.revert.outputs.restored_tag }}\` |"
+            echo
+            echo "ArgoCD auto-sync will reconcile the cluster within ~3 minutes."
+            echo "To roll forward instead, push a fix; do not revert the revert."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,6 +1,16 @@
 name: Docker Scan
 
-on: 
+# Dockerfile lint + image vulnerability scan.
+#
+# The Trivy CRITICAL step is a GATE, not a report: continue-on-error was
+# removed deliberately. A scanner that cannot fail a build is a dashboard.
+# Findings with no fix available are excluded (ignore-unfixed), so this only
+# blocks on things the team can actually act on — upgrade the base image or
+# the dependency. To ship anyway, add the CVE to .trivyignore with a reason
+# and an expiry date; that leaves an auditable record, unlike a green tick
+# on a build that scanned nothing.
+
+on:
     workflow_call:
 
 jobs:
@@ -18,7 +28,7 @@ jobs:
               uses: hadolint/hadolint-action@v3.1.0
               with:
                 dockerfile: ${{ matrix.folders}}/Dockerfile
-              
+
             - name: Docker Hardened Images [Login]
               uses: docker/login-action@v4
               with:
@@ -30,9 +40,9 @@ jobs:
               run: docker build -t devboard-${{ matrix.folders }}:ci .
               working-directory: ${{ matrix.folders}}
 
-            - name: Run Trivy vulnerability scanner
+            # ---- the gate -------------------------------------------------
+            - name: Trivy [CRITICAL — blocking]
               uses: aquasecurity/trivy-action@v0.36.0
-              continue-on-error: true
               with:
                 image-ref: devboard-${{ matrix.folders }}:ci
                 format: 'table'
@@ -40,4 +50,37 @@ jobs:
                 ignore-unfixed: true
                 vuln-type: 'os,library'
                 severity: 'CRITICAL'
-             
+                trivyignores: .trivyignore
+
+            # ---- visibility, not a gate ------------------------------------
+            # HIGH is reported so it is visible and trendable, but does not
+            # block: a base image routinely carries HIGHs with no fix, and a
+            # gate everyone learns to bypass protects nothing.
+            - name: Trivy [HIGH — report only]
+              uses: aquasecurity/trivy-action@v0.36.0
+              continue-on-error: true
+              with:
+                image-ref: devboard-${{ matrix.folders }}:ci
+                format: 'table'
+                exit-code: '0'
+                ignore-unfixed: true
+                vuln-type: 'os,library'
+                severity: 'HIGH'
+
+            - name: Trivy [SARIF for code scanning]
+              uses: aquasecurity/trivy-action@v0.36.0
+              continue-on-error: true
+              with:
+                image-ref: devboard-${{ matrix.folders }}:ci
+                format: 'sarif'
+                output: 'trivy-${{ matrix.folders }}.sarif'
+                ignore-unfixed: true
+                severity: 'HIGH,CRITICAL'
+
+            - name: Upload Trivy SARIF
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                name: trivy-sarif-${{ matrix.folders }}
+                path: trivy-${{ matrix.folders }}.sarif
+                retention-days: 5

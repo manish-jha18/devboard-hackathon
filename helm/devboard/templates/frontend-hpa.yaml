@@ -1,4 +1,13 @@
 {{- if .Values.frontend.hpa.enabled }}
+{{/*
+scaleTargetRef has to follow whichever controller is actually managing the
+pods. Pointed at a Deployment that frontend-rollout.yaml replaced, the HPA
+reports "unable to get target" and silently stops scaling — a failure mode that
+looks like nothing at all until traffic arrives.
+
+Argo Rollouts implements the scale subresource, so an HPA drives a Rollout the
+same way it drives a Deployment.
+*/}}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -7,8 +16,13 @@ metadata:
     {{- include "devboard.labels" . | nindent 4 }}
 spec:
   scaleTargetRef:
+    {{- if .Values.frontend.rollout.enabled }}
+    apiVersion: argoproj.io/v1alpha1
+    kind: Rollout
+    {{- else }}
     apiVersion: apps/v1
     kind: Deployment
+    {{- end }}
     name: {{ include "devboard.fullname" . }}-frontend
   minReplicas: {{ .Values.frontend.hpa.minReplicas }}
   maxReplicas: {{ .Values.frontend.hpa.maxReplicas }}

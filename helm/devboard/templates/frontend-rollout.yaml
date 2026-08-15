@@ -1,0 +1,97 @@
+{{- if .Values.frontend.rollout.enabled }}
+{{/*
+The frontend as an Argo Rollout instead of a Deployment.
+
+Same pod template as frontend-deployment.yaml — deliberately, so switching
+frontend.rollout.enabled does not silently change what runs, only how it is
+rolled out. The Service in frontend-service.yaml selects app: devboard-frontend
+and therefore matches both stable and canary pods; no second Service is needed
+for replica-based canary.
+
+Read the steps as: send a fifth of the pods to the new version, watch, widen,
+watch, then go. analysis runs alongside from the first step, so a broken build
+is aborted at 20% rather than after it has fully replaced the old one.
+*/}}
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: {{ include "devboard.fullname" . }}-frontend
+  labels:
+    {{- include "devboard.labels" . | nindent 4 }}
+    app: devboard-frontend
+  annotations:
+    # ArgoCD shows Rollout health natively, but this makes the intent explicit
+    # for anyone reading the manifest rather than the UI.
+    notifications.argoproj.io/subscribe.on-rollout-aborted.webhook: ""
+spec:
+  replicas: {{ .Values.frontend.replicas }}
+  revisionHistoryLimit: {{ .Values.frontend.rollout.revisionHistoryLimit }}
+  selector:
+    matchLabels:
+      app: devboard-frontend
+
+  strategy:
+    canary:
+      # Keep the old ReplicaSet scaled up during the canary so an abort is
+      # instant — no waiting for pods to be recreated. This is what turns
+      # rollback from minutes into seconds, which is the whole MTTR argument.
+      abortScaleDownDelaySeconds: {{ .Values.frontend.rollout.abortScaleDownDelaySeconds }}
+
+      analysis:
+        templates:
+          - templateName: {{ include "devboard.fullname" . }}-frontend-canary
+        # Start analysis from the first canary step rather than after the last.
+        startingStep: 1
+
+      steps:
+        {{- range .Values.frontend.rollout.steps }}
+        {{- if hasKey . "setWeight" }}
+        - setWeight: {{ .setWeight }}
+        {{- end }}
+        {{- if hasKey . "pause" }}
+        {{- if .pause }}
+        - pause:
+            duration: {{ .pause.duration }}
+        {{- else }}
+        # A bare pause with no duration waits for a human to promote. That is
+        # the manual gate; remove it for fully automated delivery.
+        - pause: {}
+        {{- end }}
+        {{- end }}
+        {{- end }}
+
+  template:
+    metadata:
+      labels:
+        {{- include "devboard.labels" . | nindent 8 }}
+        app: devboard-frontend
+    spec:
+      containers:
+        - name: devboard-frontend
+          image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}"
+          imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.frontend.containerPort }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.frontend.containerPort }}
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.frontend.containerPort }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.frontend.resources | nindent 12 }}
+          {{- with .Values.frontend.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with .Values.frontend.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

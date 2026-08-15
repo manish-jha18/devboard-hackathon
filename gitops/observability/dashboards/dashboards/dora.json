@@ -1,0 +1,521 @@
+{
+  "uid": "devboard-dora",
+  "title": "DevBoard — DORA Metrics",
+  "description": "The four DORA keys for DevBoard, computed by dora-exporter from the GitHub Deployments API. Threshold colours encode the DORA performance bands (Elite / High / Medium / Low) from the Accelerate State of DevOps report — they are status colours, not series identity.",
+  "tags": ["devboard", "dora", "delivery"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-30d", "to": "now" },
+  "editable": true,
+  "graphTooltip": 1,
+  "templating": {
+    "list": [
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(dora_deployments_total, environment)",
+        "refresh": 1,
+        "includeAll": false,
+        "multi": false,
+        "current": { "text": "production", "value": "production" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "The four keys",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false,
+      "panels": []
+    },
+
+    {
+      "type": "stat",
+      "title": "Deployment frequency",
+      "description": "Successful deployments per day over the rolling window. Elite ≥ 1/day; High ≥ 1/week; Medium ≥ 1/month.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "dora_deployment_frequency_per_day{environment=\"$environment\"}",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "min": 0,
+          "noValue": "no data",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.033 },
+              { "color": "yellow", "value": 0.143 },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+
+    {
+      "type": "stat",
+      "title": "Lead time for changes",
+      "description": "Median hours from commit authored to deployed. Elite < 1 day; High < 1 week; Medium < 1 month.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "dora:lead_time:hours{environment=\"$environment\"}",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "h",
+          "decimals": 1,
+          "min": 0,
+          "noValue": "no data",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 24 },
+              { "color": "orange", "value": 168 },
+              { "color": "red", "value": 730 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+
+    {
+      "type": "stat",
+      "title": "Change failure rate",
+      "description": "Share of deployments that required remediation. Elite/High ≤ 15%; Medium ≤ 30%. Shows 'no data' rather than 0% when nothing has deployed — an idle pipeline is not a perfect one.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "dora:change_failure_rate:percent{environment=\"$environment\"}",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "min": 0,
+          "max": 100,
+          "noValue": "no data",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 15 },
+              { "color": "orange", "value": 30 },
+              { "color": "red", "value": 45 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+
+    {
+      "type": "stat",
+      "title": "Time to restore service",
+      "description": "Median minutes from a deployment being marked failed to the rollback that resolved it. Elite < 1 hour; High < 1 day.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "dora:mttr:minutes{environment=\"$environment\"}",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "m",
+          "decimals": 0,
+          "min": 0,
+          "noValue": "no failures",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 60 },
+              { "color": "orange", "value": 1440 },
+              { "color": "red", "value": 10080 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+
+    {
+      "type": "row",
+      "title": "Trends",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 7 },
+      "collapsed": false,
+      "panels": []
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Deployment frequency over time",
+      "description": "Deployments per day. A single series, so no legend box is needed — the title names it.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "dora_deployment_frequency_per_day{environment=\"$environment\"}",
+          "legendFormat": "deploys/day"
+        }
+      ],
+      "options": {
+        "legend": { "showLegend": false, "displayMode": "list", "placement": "bottom", "calcs": [] },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2,
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "pointSize": 8,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0
+          },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Lead time for changes",
+      "description": "Median and 95th percentile on one axis — both are hours, so they share a scale. Two series, so a legend is present.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "dora_lead_time_seconds{environment=\"$environment\"} / 3600",
+          "legendFormat": "median"
+        },
+        {
+          "refId": "B",
+          "expr": "dora_lead_time_p95_seconds{environment=\"$environment\"} / 3600",
+          "legendFormat": "p95"
+        }
+      ],
+      "options": {
+        "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom", "calcs": [] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "h",
+          "decimals": 1,
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "pointSize": 8,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 0
+          }
+        },
+        "overrides": []
+      }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Change failure rate",
+      "description": "Percentage of deployments requiring remediation, with the 15% Elite band marked.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "dora:change_failure_rate:percent{environment=\"$environment\"}",
+          "legendFormat": "change failure rate"
+        }
+      ],
+      "options": {
+        "legend": { "showLegend": false, "displayMode": "list", "placement": "bottom", "calcs": [] },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "min": 0,
+          "max": 100,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "pointSize": 8,
+            "showPoints": "never",
+            "spanNulls": true,
+            "thresholdsStyle": { "mode": "dashed" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 15 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+
+    {
+      "type": "timeseries",
+      "title": "Gateway success rate",
+      "description": "The same expression the canary AnalysisTemplate is judged on. When this dips below 95% the DeployedRevisionFailing alert fires and can trigger an automated rollback.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "dora:gateway_success_rate:ratio * 100",
+          "legendFormat": "success rate"
+        }
+      ],
+      "options": {
+        "legend": { "showLegend": false, "displayMode": "list", "placement": "bottom", "calcs": [] },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 2,
+          "max": 100,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "pointSize": 8,
+            "showPoints": "never",
+            "spanNulls": true,
+            "axisSoftMin": 90,
+            "thresholdsStyle": { "mode": "dashed" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 95 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+
+    {
+      "type": "row",
+      "title": "Delivery pipeline health",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 },
+      "collapsed": false,
+      "panels": []
+    },
+
+    {
+      "type": "stat",
+      "title": "Since last deployment",
+      "description": "How long ago the most recent successful deployment landed.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 25 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - dora_last_deployment_timestamp_seconds{environment=\"$environment\"}",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0,
+          "noValue": "never",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 604800 },
+              { "color": "orange", "value": 2592000 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+
+    {
+      "type": "stat",
+      "title": "Deployments in window",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 25 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "dora_deployments_total{environment=\"$environment\"}",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "none",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center"
+      },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "decimals": 0, "noValue": "0" },
+        "overrides": []
+      }
+    },
+
+    {
+      "type": "stat",
+      "title": "Failed deployments in window",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 25 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "dora_failed_deployments_total{environment=\"$environment\"}",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+
+    {
+      "type": "stat",
+      "title": "Exporter reaching GitHub",
+      "description": "0 means the DORA numbers on this dashboard are stale — usually GitHub API rate limiting.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 25 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "dora_exporter_last_scrape_success{environment=\"$environment\"}",
+          "instant": true
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "center"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "STALE", "color": "red", "index": 0 },
+                "1": { "text": "OK", "color": "green", "index": 1 }
+              }
+            }
+          ],
+          "noValue": "no data",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "text", "value": null }] }
+        },
+        "overrides": []
+      }
+    }
+  ]
+}

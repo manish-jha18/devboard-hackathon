@@ -1,0 +1,62 @@
+# Closes the loop on supply chain security: docker-push.yml signs each image
+# with the workflow's own OIDC identity, and this policy refuses to take that
+# on faith from anyone else. An attacker who obtains the Docker Hub token can
+# push an image; they cannot mint a Sigstore certificate that says it came from
+# this repository's workflow.
+#
+# failureAction: Audit — reports violations, admits the Pod. Everything running
+# today predates signing, so Enforce here would wedge the cluster on the first
+# restart. Flip to Enforce once a signed tag has rolled all the way through.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-image-signatures
+  annotations:
+    policies.kyverno.io/title: Verify DevBoard image signatures
+    policies.kyverno.io/category: Supply Chain Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      DevBoard images must carry a Sigstore signature produced by this
+      repository's GitHub Actions workflow. Keyless, so there is no private key
+      to leak, rotate, or forget to rotate.
+spec:
+  # Ignore, not Fail. If the Kyverno webhook is unreachable the cluster keeps
+  # admitting Pods. A policy engine that takes the cluster down when it dies is
+  # a bigger availability risk than the unsigned image it was meant to catch.
+  failurePolicy: Ignore
+  webhookTimeoutSeconds: 30
+  # Signature checks hit a remote registry, so they cannot run in background
+  # scans against already-admitted resources.
+  background: false
+
+  rules:
+    - name: verify-devboard-images
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - devboard
+                - devboard-helm
+      verifyImages:
+        - imageReferences:
+            - "manishjha18/devboard-*"
+          failureAction: Audit
+          # Leave the manifest's tag alone while auditing. mutateDigest rewrites
+          # tag -> digest, which is correct long term but would make every
+          # Rollout and Deployment differ from Git while ArgoCD self-heals.
+          mutateDigest: false
+          verifyDigest: false
+          required: false
+          attestors:
+            - count: 1
+              entries:
+                - keyless:
+                    # Any workflow in this repository, on any ref. Narrow the
+                    # subject to a specific workflow file once the pipeline
+                    # settles, e.g. .../.github/workflows/docker-push.yml@refs/heads/feat/full
+                    subject: "https://github.com/manish-jha18/devboard-hackathon/*"
+                    issuer: "https://token.actions.githubusercontent.com"
+                    rekor:
+                      url: https://rekor.sigstore.dev

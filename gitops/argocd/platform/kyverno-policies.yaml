@@ -1,0 +1,41 @@
+# The DevBoard ClusterPolicies themselves, from gitops/kyverno/policies.
+#
+# Wave 2 so Kyverno's CRDs (wave 0) exist first. Split from the kyverno app on
+# purpose: the operator and the rules it runs have completely different change
+# cadences. Policies get edited weekly during a hardening pass; the controller
+# gets upgraded rarely and carefully. Coupling them means every policy tweak
+# re-renders the operator's chart.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kyverno-policies
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/manish-jha18/devboard-hackathon.git
+    targetRevision: feat/full
+    path: gitops/kyverno/policies
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kyverno
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      # Kyverno's webhook takes a few seconds to become ready after the
+      # operator syncs. Without a retry the first policy apply fails and the
+      # app sits Degraded until someone clicks Sync.
+      limit: 5
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 3m

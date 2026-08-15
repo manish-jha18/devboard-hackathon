@@ -1,0 +1,82 @@
+{{- if .Values.frontend.rollout.enabled }}
+{{/*
+The automated part of "automated rollback".
+
+Argo Rollouts runs this against Prometheus at each canary step. If a metric
+breaches its condition more than failureLimit times, the AnalysisRun fails, the
+Rollout aborts, and traffic returns to the previous ReplicaSet without anyone
+being paged. That is the mechanism the DORA change-failure-rate and MTTR
+numbers actually depend on — MTTR measured in the time it takes a human to
+notice a bad deploy is not a number worth reporting.
+
+A note on what these queries can and cannot see. This canary is replica-based:
+there is no Gateway API traffic-router plugin installed, so both stable and
+canary pods sit behind the same Service and traffic splits roughly by pod
+count. The consequence is that these metrics are BLENDED — they measure all
+traffic through the gateway, not canary traffic specifically. A canary serving
+errors still moves the blended number (that is what catches it), but at
+setWeight 20 a total canary failure only pushes the blended error rate to ~20%,
+so the thresholds below are set to catch that, not tuned for precision.
+
+To get per-version attribution, install the Argo Rollouts Gateway API plugin
+and add spec.strategy.canary.trafficRouting — then these queries can filter on
+the canary Service and the thresholds can tighten considerably.
+*/}}
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ include "devboard.fullname" . }}-frontend-canary
+  labels:
+    {{- include "devboard.labels" . | nindent 4 }}
+spec:
+  metrics:
+    # ---- error rate through the gateway --------------------------------
+    - name: gateway-success-rate
+      # Give the canary pods time to become ready and take real traffic before
+      # judging them. Without this the first sample is taken against a pod that
+      # is still starting, which reads as failure.
+      initialDelay: {{ .Values.frontend.rollout.analysis.initialDelay }}
+      interval: {{ .Values.frontend.rollout.analysis.interval }}
+      count: {{ .Values.frontend.rollout.analysis.count }}
+      # One bad sample is noise; two in a row is a trend.
+      failureLimit: {{ .Values.frontend.rollout.analysis.failureLimit }}
+      successCondition: result[0] >= {{ .Values.frontend.rollout.analysis.minSuccessRate }}
+      provider:
+        prometheus:
+          address: {{ .Values.frontend.rollout.analysis.prometheusAddress }}
+          # `or vector(1)` is load-bearing. On a quiet cluster the denominator
+          # can be zero, the division returns NO DATA, and Argo Rollouts treats
+          # an empty result as Inconclusive — which pauses the rollout forever
+          # waiting for a human. Falling back to 1 means "no traffic" reads as
+          # "nothing is broken", which is the correct default for a canary.
+          query: |
+            (
+              sum(rate(traces_span_metrics_calls_total{
+                service_name="{{ .Values.frontend.rollout.analysis.gatewayServiceName }}",
+                status_code!="STATUS_CODE_ERROR"
+              }[{{ .Values.frontend.rollout.analysis.window }}]))
+              /
+              sum(rate(traces_span_metrics_calls_total{
+                service_name="{{ .Values.frontend.rollout.analysis.gatewayServiceName }}"
+              }[{{ .Values.frontend.rollout.analysis.window }}]))
+            ) or vector(1)
+
+    # ---- latency regression ---------------------------------------------
+    # A deploy that is "up" but three times slower is still a failed change.
+    # Error-rate-only analysis waves those through.
+    - name: gateway-latency-p95
+      initialDelay: {{ .Values.frontend.rollout.analysis.initialDelay }}
+      interval: {{ .Values.frontend.rollout.analysis.interval }}
+      count: {{ .Values.frontend.rollout.analysis.count }}
+      failureLimit: {{ .Values.frontend.rollout.analysis.failureLimit }}
+      successCondition: result[0] <= {{ .Values.frontend.rollout.analysis.maxLatencyP95Ms }}
+      provider:
+        prometheus:
+          address: {{ .Values.frontend.rollout.analysis.prometheusAddress }}
+          query: |
+            histogram_quantile(0.95,
+              sum(rate(traces_span_metrics_duration_milliseconds_bucket{
+                service_name="{{ .Values.frontend.rollout.analysis.gatewayServiceName }}"
+              }[{{ .Values.frontend.rollout.analysis.window }}])) by (le)
+            ) or vector(0)
+{{- end }}

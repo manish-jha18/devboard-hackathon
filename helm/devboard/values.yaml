@@ -22,9 +22,20 @@ postgres:
     limits:
       cpu: 500m
       memory: 256Mi
+
+# ---------------------------------------------------------------------------
+# Image coordinates below are CI-MANAGED. .github/workflows/gitops-bump.yml
+# rewrites repository and tag on every successful pipeline run, so treat what
+# is committed here as a starting point, not a decision.
+#
+# The tags currently pinned were built from the UPSTREAM repository and do not
+# exist under manishjha18. Deploying this chart before the pipeline has run
+# once will therefore ImagePullBackOff. Run the pipeline first; it publishes
+# sha-<short> for all three services and bumps these lines in the same commit.
+# ---------------------------------------------------------------------------
 backend:
   image:
-    repository: trainwithshubham/devboard-backend
+    repository: manishjha18/devboard-backend
     tag: sha-4945e5b
     pullPolicy: IfNotPresent
   replicas: 1
@@ -39,7 +50,7 @@ backend:
       memory: 128Mi
 frontend:
   image:
-    repository: trainwithshubham/devboard-frontend
+    repository: manishjha18/devboard-frontend
     tag: sha-4945e5b
     pullPolicy: IfNotPresent
   replicas: 1
@@ -57,10 +68,65 @@ frontend:
     minReplicas: 1
     maxReplicas: 5
     targetCPUUtilizationPercentage: 60
+
+  # Left empty on purpose. The Kyverno restricted-security-context policy will
+  # flag this in Audit mode, which is the correct outcome: the finding is real.
+  # Filling these in without first confirming the image runs as non-root turns
+  # an audit finding into a CrashLoopBackOff. Verify with:
+  #   docker run --rm --user 65532 manishjha18/devboard-frontend:<tag>
+  # then set:
+  #   podSecurityContext: {runAsNonRoot: true, runAsUser: 65532, seccompProfile: {type: RuntimeDefault}}
+  #   securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, readOnlyRootFilesystem: false}
+  podSecurityContext: {}
+  securityContext: {}
+
+  # ---- progressive delivery -------------------------------------------
+  rollout:
+    # Replaces the frontend Deployment with an Argo Rollout. Requires the
+    # argo-rollouts platform app (gitops/argocd/platform/argo-rollouts.yaml).
+    enabled: true
+
+    # How many old ReplicaSets to keep. This is the rollback depth: Argo
+    # Rollouts can undo to any revision still in history, so 5 means the last
+    # five deploys are recoverable in seconds.
+    revisionHistoryLimit: 5
+
+    # Keep the previous ReplicaSet warm for 30s after an abort so rollback is
+    # instant rather than a cold start.
+    abortScaleDownDelaySeconds: 30
+
+    # 20% -> watch -> 50% -> watch -> 100%. Each pause is a window for the
+    # AnalysisRun to fail the rollout before it widens.
+    steps:
+      - setWeight: 20
+      - pause:
+          duration: 2m
+      - setWeight: 50
+      - pause:
+          duration: 2m
+      - setWeight: 100
+
+    analysis:
+      prometheusAddress: http://prometheus-operated.observability.svc.cluster.local:9090
+      # The Envoy Gateway's span-metrics identity. Confirmed present in
+      # Prometheus; see the note in frontend-analysistemplate.yaml about why
+      # this is a blended signal rather than canary-only.
+      gatewayServiceName: devboard-gateway.devboard
+      window: 2m
+      initialDelay: 60s
+      interval: 60s
+      count: 5
+      failureLimit: 1
+      # 0.95 tolerates a fully-broken canary at setWeight 20 for exactly one
+      # sample before aborting. Tighten once traffic routing gives per-version
+      # attribution.
+      minSuccessRate: "0.95"
+      maxLatencyP95Ms: 1500
+
 ai:
   enabled: true
   image:
-    repository: trainwithshubham/devboard-ai-service
+    repository: manishjha18/devboard-ai-service
     tag: sha-4945e5b
     pullPolicy: IfNotPresent
   replicas: 1

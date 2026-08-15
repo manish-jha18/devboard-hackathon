@@ -1,0 +1,150 @@
+# Alerting for change failure rate and MTTR, plus the rules that make the DORA
+# dashboard cheap to query.
+#
+# The alert that matters here is DeployedRevisionFailing. It is the trigger
+# side of "alerting tied to rollback": route it to a webhook receiver that
+# POSTs a repository_dispatch of type `rollback` to GitHub, and
+# .github/workflows/rollback.yml reverts the deploy commit without a human in
+# the loop. Wiring instructions are in gitops/16-dora-sota.md — the receiver
+# needs a GitHub PAT, so it is created with kubectl rather than committed.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: devboard-dora
+  namespace: observability
+  labels:
+    app.kubernetes.io/part-of: devboard
+spec:
+  groups:
+    # ---- recording rules -------------------------------------------------
+    # The dashboard reads these rather than recomputing. Mostly this is about
+    # having one definition of each metric: a panel that quietly uses a
+    # different window than the alert is how a dashboard and a page end up
+    # disagreeing about whether the service is healthy.
+    - name: dora-recording
+      interval: 60s
+      rules:
+        - record: dora:deployment_frequency:per_week
+          expr: dora_deployment_frequency_per_day * 7
+
+        - record: dora:lead_time:hours
+          expr: dora_lead_time_seconds / 3600
+
+        - record: dora:mttr:minutes
+          expr: dora_mttr_seconds / 60
+
+        - record: dora:change_failure_rate:percent
+          expr: dora_change_failure_rate * 100
+
+        # Gateway success rate — the same expression the canary AnalysisTemplate
+        # uses, so the dashboard shows exactly what the rollout is judged on.
+        - record: dora:gateway_success_rate:ratio
+          expr: |
+            (
+              sum(rate(traces_span_metrics_calls_total{service_name="devboard-gateway.devboard",status_code!="STATUS_CODE_ERROR"}[5m]))
+              /
+              sum(rate(traces_span_metrics_calls_total{service_name="devboard-gateway.devboard"}[5m]))
+            ) or vector(1)
+
+    # ---- change failure / rollback triggers ------------------------------
+    - name: dora-change-failure
+      rules:
+        - alert: DeployedRevisionFailing
+          # 5% of gateway traffic erroring for 5 minutes. Deliberately tighter
+          # than the canary's 0.95 threshold: by the time this fires the
+          # rollout has already been promoted, so all traffic is on the new
+          # version and there is no dilution.
+          expr: dora:gateway_success_rate:ratio < 0.95
+          for: 5m
+          labels:
+            severity: critical
+            dora_incident: "true"
+            # Consumed by the Alertmanager webhook receiver that triggers
+            # .github/workflows/rollback.yml.
+            action: rollback
+          annotations:
+            summary: "Gateway success rate below 95% — the deployed revision is failing"
+            description: >-
+              More than 5% of requests through devboard-gateway are returning
+              errors. If this followed a deploy, the deploy is the suspect;
+              rollback restores the previous ReplicaSet in seconds because
+              abortScaleDownDelaySeconds keeps it warm.
+            runbook: "kubectl argo rollouts undo devboard-frontend -n devboard-helm — or run the Rollback workflow to revert the gitops commit"
+
+        - alert: RolloutAborted
+          # Argo Rollouts marks a Rollout Degraded when an AnalysisRun fails
+          # and the canary is aborted. This alert is the notification half of
+          # automated rollback: the abort already happened, a human just needs
+          # to know a change was rejected.
+          expr: rollout_info{phase="Degraded"} == 1
+          for: 2m
+          labels:
+            severity: warning
+            dora_incident: "true"
+          annotations:
+            summary: "Rollout {{ $labels.name }} is Degraded — canary analysis rejected the new version"
+            description: >-
+              Argo Rollouts aborted the canary and traffic is back on the
+              previous revision. This counts as a change failure; the deploy
+              never reached 100%.
+            runbook: "kubectl argo rollouts get rollout {{ $labels.name }} -n {{ $labels.namespace }} --watch"
+
+        - alert: RolloutStuckPaused
+          # A canary paused far longer than its steps allow means analysis is
+          # Inconclusive — usually a Prometheus query returning no data. Left
+          # alone this looks like a successful deploy that simply never
+          # finishes, and it silently stops all delivery.
+          expr: rollout_info{phase="Paused"} == 1
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Rollout {{ $labels.name }} has been paused for 30 minutes"
+            description: >-
+              Either a manual pause step is waiting for promotion, or an
+              AnalysisRun is Inconclusive because its Prometheus query returns
+              no data. Check the AnalysisRun before promoting blindly.
+            runbook: "kubectl argo rollouts get rollout {{ $labels.name }} -n {{ $labels.namespace }}"
+
+    # ---- the metrics pipeline itself -------------------------------------
+    - name: dora-pipeline-health
+      rules:
+        - alert: DoraExporterDown
+          expr: up{job="dora-exporter"} == 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "DORA exporter is not being scraped — the dashboard is stale"
+            runbook: "kubectl -n dora logs deploy/dora-exporter"
+
+        - alert: DoraExporterCannotReachGitHub
+          expr: dora_exporter_last_scrape_success == 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "DORA exporter cannot read the GitHub Deployments API"
+            description: >-
+              Usually rate limiting. Unauthenticated access is 60 requests an
+              hour and each refresh spends one call per deployment for its
+              status. Create the dora-github secret with a PAT.
+            runbook: "kubectl -n dora logs deploy/dora-exporter | tail -50"
+
+        - alert: NoDeploymentsRecorded
+          # Deployment frequency is the one DORA metric where zero is a real
+          # measurement rather than a broken exporter — but it is worth
+          # noticing. Scoped to when the exporter is definitely healthy so it
+          # cannot double-fire with DoraExporterDown.
+          expr: |
+            dora_deployments_total == 0
+              and on() dora_exporter_last_scrape_success == 1
+          for: 24h
+          labels:
+            severity: info
+          annotations:
+            summary: "No deployments recorded in the last {{ with query \"dora_window_days\" }}{{ . | first | value }}{{ end }} days"
+            description: >-
+              Either nothing shipped, or deployment-record.yml is not running.
+              Check that the DevSecOps workflow reached its deployment-record
+              job on the last push to feat/full.

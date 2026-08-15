@@ -3,7 +3,7 @@ name: Terraform Checks
 
 on:
   push:
-    branches: [mega-project]
+    branches: [feat/full]
     paths:
       - 'terraform/**'
       - '.github/workflows/terraform-ci.yml'

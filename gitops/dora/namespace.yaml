@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dora
+  labels:
+    app.kubernetes.io/part-of: devboard
+    # The exporter reads the GitHub API and exposes aggregate counts. It never
+    # touches application data, so it stays out of the devboard namespaces the
+    # Kyverno policies scope to — and out of their blast radius.
+    pod-security.kubernetes.io/enforce: restricted

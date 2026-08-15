@@ -1,17 +1,32 @@
 name: DevSecOps
 
+# The pipeline. Gates on the left, delivery on the right.
+#
+# Ordering is deliberate: everything that can reject the change runs before
+# anything is published. docker-push signs what it builds, gitops-bump writes
+# the new tag into the manifests ArgoCD watches, and deployment-record writes
+# the event the DORA exporter measures. Removing that last job does not break
+# the deploy — it breaks the ability to say how often you deploy, which is the
+# thing this pipeline is supposed to make measurable.
+
 on:
   push:
-    branches: [mega-project]
+    branches: [feat/full]
     paths:
       - 'backend/**'
       - 'frontend/**'
       - 'ai-service/**'
+      - 'helm/**'
+      - 'k8s/**'
+      - 'gitops/kyverno/**'
       - '.github/workflows/**'
       - 'sonar-project.properties'
   pull_request:
-    branches: [mega-project]
+    branches: [feat/full]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   prep:
@@ -22,6 +37,7 @@ jobs:
       - id: t
         run: echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
+  # ---- gates -------------------------------------------------------------
   code-quality:
     uses: ./.github/workflows/code-quality.yml
   secret-scanning:
@@ -31,15 +47,23 @@ jobs:
   docker-checks:
     uses: ./.github/workflows/docker-scans.yml
     secrets: inherit
+  policy-checks:
+    uses: ./.github/workflows/policy-check.yml
   sonar-qube:
     uses: ./.github/workflows/sonar-scan.yml
     secrets: inherit
   code-tests:
     uses: ./.github/workflows/code-tests.yml
 
+  # ---- delivery ----------------------------------------------------------
   docker-push:
     if: github.event_name != 'pull_request'
-    needs: [prep, code-quality, code-tests, sonar-qube, docker-checks, dependency-checks, secret-scanning]
+    needs: [prep, code-quality, code-tests, sonar-qube, docker-checks, policy-checks, dependency-checks, secret-scanning]
+    permissions:
+      contents: read
+      # Propagated to the reusable workflow for keyless cosign signing.
+      # Reusable workflows do not inherit permissions implicitly.
+      id-token: write
     uses: ./.github/workflows/docker-push.yml
     with:
       image_tag: ${{ needs.prep.outputs.tag }}
@@ -53,3 +77,14 @@ jobs:
     uses: ./.github/workflows/gitops-bump.yml
     with:
       image_tag: ${{ needs.prep.outputs.tag }}
+
+  deployment-record:
+    if: github.event_name != 'pull_request'
+    needs: [prep, gitops-bump]
+    permissions:
+      contents: read
+      deployments: write
+    uses: ./.github/workflows/deployment-record.yml
+    with:
+      image_tag: ${{ needs.prep.outputs.tag }}
+      environment: production

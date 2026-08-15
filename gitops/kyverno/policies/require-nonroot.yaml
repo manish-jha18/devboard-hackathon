@@ -1,0 +1,81 @@
+# Pod Security Standards "restricted", trimmed to the four controls that matter
+# most here and that the DevBoard images can actually satisfy today.
+#
+# Kept as one policy rather than pulling in the kyverno-policies chart: that
+# chart ships ~20 policies covering host namespaces, volume types and sysctls
+# that nothing in this cluster uses. Twenty audit-mode policies producing
+# violations nobody reads is how policy-as-code becomes decoration.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-restricted-security-context
+  annotations:
+    policies.kyverno.io/title: Require a restricted security context
+    policies.kyverno.io/category: Pod Security Standards
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/description: >-
+      Workload containers must run as non-root, must not allow privilege
+      escalation, and must drop ALL capabilities.
+spec:
+  failurePolicy: Ignore
+  background: true
+
+  rules:
+    - name: run-as-non-root
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - devboard
+                - devboard-helm
+      validate:
+        failureAction: Audit
+        message: "Containers must run as non-root (set runAsNonRoot: true on the pod or container)."
+        anyPattern:
+          - spec:
+              securityContext:
+                runAsNonRoot: true
+          - spec:
+              containers:
+                - securityContext:
+                    runAsNonRoot: true
+
+    - name: no-privilege-escalation
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - devboard
+                - devboard-helm
+      validate:
+        failureAction: Audit
+        message: "allowPrivilegeEscalation must be false."
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  allowPrivilegeEscalation: false
+
+    - name: drop-all-capabilities
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - devboard
+                - devboard-helm
+      validate:
+        failureAction: Audit
+        message: "Containers must drop ALL capabilities."
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  capabilities:
+                    drop:
+                      - ALL

@@ -1,0 +1,74 @@
+# These two rules are what make progressive delivery and MTTR work at all.
+#
+# A canary is judged by whether the new pods become ready. Without a readiness
+# probe, "ready" means "the process started", so a container that boots and
+# then serves 500s sails through every canary step. Without resource requests,
+# the scheduler cannot place canary pods predictably and an unbounded container
+# can take a node down with it — turning one bad deploy into a cluster incident,
+# which is exactly the change-failure-rate number you are trying to reduce.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-probes-and-resources
+  annotations:
+    policies.kyverno.io/title: Require probes and resource requests
+    policies.kyverno.io/category: Reliability, DORA
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      Every workload container needs a readiness probe and CPU/memory requests.
+      Canary analysis and honest MTTR both depend on the cluster being able to
+      tell a healthy pod from a running one.
+spec:
+  failurePolicy: Ignore
+  background: true
+
+  rules:
+    - name: require-readiness-probe
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - devboard
+                - devboard-helm
+      # Job and CronJob pods are one-shot: readiness has no meaning for them.
+      exclude:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              selector:
+                matchLabels:
+                  job-name: "*"
+      validate:
+        failureAction: Audit
+        message: "Every container needs a readinessProbe — canary analysis cannot judge a rollout without one."
+        foreach:
+          - list: "request.object.spec.containers"
+            deny:
+              conditions:
+                all:
+                  - key: "{{ element.readinessProbe || '' }}"
+                    operator: Equals
+                    value: ""
+
+    - name: require-resource-requests
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - devboard
+                - devboard-helm
+      validate:
+        failureAction: Audit
+        message: "Every container needs CPU and memory requests."
+        pattern:
+          spec:
+            containers:
+              - resources:
+                  requests:
+                    memory: "?*"
+                    cpu: "?*"

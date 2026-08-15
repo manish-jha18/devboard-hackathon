@@ -1,0 +1,15 @@
+# Trivy suppressions.
+#
+# The CRITICAL scan in .github/workflows/docker-scans.yml is a hard gate. This
+# file is the only sanctioned way past it, and every entry must carry:
+#
+#   - the CVE id
+#   - WHY it does not apply here (not "it's noisy")
+#   - an expiry date, so suppressions are revisited rather than inherited
+#
+# Format is one CVE per line; everything after # is a comment.
+#
+# Example:
+#   CVE-2024-00000  # not reachable: we never invoke the affected codec. expires 2026-12-01
+#
+# An empty file means nothing is currently suppressed, which is the goal.

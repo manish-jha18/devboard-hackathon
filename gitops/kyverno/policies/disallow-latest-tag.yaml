@@ -1,0 +1,57 @@
+# :latest is the enemy of both DORA metrics and rollback.
+#
+# Deployment frequency and lead time are only measurable if you can say WHICH
+# build is running; :latest makes every deploy look identical. Rollback is only
+# possible if the previous artifact still has a name; :latest overwrites it.
+# docker-push.yml already publishes an immutable sha-<short> tag alongside
+# :latest — this policy is what makes the cluster actually use it.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest-tag
+  annotations:
+    policies.kyverno.io/title: Disallow the latest tag
+    policies.kyverno.io/category: Best Practices, DORA
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      Images must be referenced by an immutable tag or digest. A mutable tag
+      makes "what is deployed right now" unanswerable, which breaks lead time,
+      deployment frequency and rollback simultaneously.
+spec:
+  failurePolicy: Ignore
+  background: true
+
+  rules:
+    - name: require-image-tag
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - devboard
+                - devboard-helm
+      validate:
+        failureAction: Audit
+        message: "An image tag is required; an untagged reference resolves to :latest."
+        pattern:
+          spec:
+            containers:
+              - image: "*:*"
+
+    - name: forbid-latest-tag
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaces:
+                - devboard
+                - devboard-helm
+      validate:
+        failureAction: Audit
+        message: "Using :latest is not allowed — deploy the immutable sha-<short> tag that CI published."
+        pattern:
+          spec:
+            containers:
+              - image: "!*:latest"
