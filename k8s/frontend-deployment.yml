@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: devboard-frontend
-        image: manishjha18/devboard-frontend:sha-f9acf41
+        image: manishjha18/devboard-frontend:sha-6c6ea59
         ports:
         - containerPort: 4173
         livenessProbe:
