@@ -24,7 +24,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: dora-exporter
-          image: manishjha18/devboard-dora-exporter:0.1.0
+          image: manishjha18/devboard-dora-exporter:0.1.1
           imagePullPolicy: IfNotPresent
           ports:
             - name: metrics

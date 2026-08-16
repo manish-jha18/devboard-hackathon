@@ -142,8 +142,16 @@ class Deployment:
     created_at: datetime
     committed_at: datetime | None
     is_rollback: bool
-    state: str | None = None
-    state_at: datetime | None = None
+    # Derived from the deployment's FULL status history, not just its latest
+    # status. GitHub automatically marks older deployments `inactive` when a
+    # newer one succeeds in the same environment, so "latest status == success"
+    # is only ever true for the most recent deployment. Reading it that way
+    # pins deployment frequency at 1 forever, no matter how much you ship.
+    # The original `success` entry stays in the history, so that is what we
+    # look for.
+    succeeded: bool = False
+    failed: bool = False
+    failed_at: datetime | None = None
 
     @property
     def lead_time_seconds(self) -> float | None:
@@ -233,10 +241,20 @@ def fetch_deployments(cutoff: datetime) -> list[Deployment]:
             )
             resp.raise_for_status()
             statuses = resp.json()
-            if statuses:
-                # Newest first; the latest state is the one that counts.
-                dep.state = statuses[0].get("state")
-                dep.state_at = _parse_ts(statuses[0].get("created_at"))
+
+            # Scan every status, not just the newest. A deployment that went
+            # out and was later superseded reads `inactive` on top of the
+            # `success` that is still underneath it.
+            states = [
+                (s.get("state"), _parse_ts(s.get("created_at"))) for s in statuses
+            ]
+            dep.succeeded = any(state == "success" for state, _ in states)
+
+            failures = [ts for state, ts in states if state == "failure" and ts]
+            dep.failed = bool(failures)
+            # Earliest failure: when the deployment was first declared bad,
+            # which is where the MTTR clock starts.
+            dep.failed_at = min(failures) if failures else None
         except requests.RequestException as exc:
             log.warning("status fetch failed for deployment %s: %s", dep.id, exc)
 
@@ -253,8 +271,12 @@ def compute_and_publish(deployments: list[Deployment]) -> None:
 
     rollbacks = [d for d in deployments if d.is_rollback]
     real_deploys = [d for d in deployments if not d.is_rollback]
-    failed = [d for d in real_deploys if d.state == "failure"]
-    succeeded = [d for d in real_deploys if d.state == "success"]
+    # A deployment counts as failed if it was EVER marked failed, and as
+    # shipped if it was EVER marked successful. The two are not exclusive: a
+    # deploy that went out and was later rolled back is both a deployment and
+    # a change failure, which is exactly what change failure rate measures.
+    failed = [d for d in real_deploys if d.failed]
+    succeeded = [d for d in real_deploys if d.succeeded]
 
     # --- deployment frequency ------------------------------------------
     m_deploy_total.labels(**labels).set(len(succeeded))
@@ -296,7 +318,7 @@ def compute_and_publish(deployments: list[Deployment]) -> None:
     # service was restored.
     restore_times: list[float] = []
     for fail in failed:
-        failed_at = fail.state_at or fail.created_at
+        failed_at = fail.failed_at or fail.created_at
         later = [r for r in rollbacks if r.created_at >= failed_at]
         if later:
             restore = min(later, key=lambda r: r.created_at)
