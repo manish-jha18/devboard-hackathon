@@ -4,7 +4,7 @@ How DevBoard ships: the pipeline, the safety gates, the canary, and the four
 DORA metrics. This file describes what is configured, what each piece does, and
 how to open it.
 
-Application: <http://a1e028058687441b2bbb7d22ccc5cfb7-1032811035.us-west-2.elb.amazonaws.com/>
+Application: <http://loadbalancer.us-west-2.elb.amazonaws.com/>
 
 ---
 
