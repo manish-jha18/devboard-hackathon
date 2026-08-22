@@ -79,7 +79,7 @@ jobs:
 
             - name: Upload Trivy SARIF
               if: always()
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                 name: trivy-sarif-${{ matrix.folders }}
                 path: trivy-${{ matrix.folders }}.sarif
